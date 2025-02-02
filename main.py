@@ -25,6 +25,11 @@ os.makedirs(PROCESSED_FOLDER, exist_ok=True)
 app.mount("/uploads", StaticFiles(directory=UPLOAD_FOLDER), name="uploads")
 app.mount("/processed", StaticFiles(directory=PROCESSED_FOLDER), name="processed")
 
+
+@app.get("/")
+def read_root():
+    return {"message": "Hello, World!"}
+
 @app.post("/upload/")
 async def upload_and_segment_image(file: UploadFile = File(...)):
     if not file.content_type.startswith('image/'):
