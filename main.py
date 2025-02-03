@@ -1,12 +1,13 @@
 from fastapi import FastAPI, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from PIL import Image, ImageOps
-import os
+from PIL import Image
+import numpy as np
+import tensorflow as tf
+import gdown
 
 app = FastAPI()
 
-# Enable CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -14,48 +15,50 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+model_url = "https://drive.google.com/uc?id=1T4091isCyD4xdWYrG4Oesvx_3wPvcbS3"
+output = "potato_disease_model.h5"
 
-# Ensure folders exist in serverless environments (Vercel may reset on each deploy)
-UPLOAD_FOLDER = "/tmp/uploaded_images"
-PROCESSED_FOLDER = "/tmp/processed_images"
-os.makedirs(UPLOAD_FOLDER, exist_ok=True)
-os.makedirs(PROCESSED_FOLDER, exist_ok=True)
+# Download model if not exists
+import os
+if not os.path.exists(output):
+    gdown.download(model_url, output, quiet=False)
 
-# Serve static files (may not work perfectly on Vercel, consider using cloud storage like S3)
-app.mount("/uploads", StaticFiles(directory=UPLOAD_FOLDER), name="uploads")
-app.mount("/processed", StaticFiles(directory=PROCESSED_FOLDER), name="processed")
-
-
+model = tf.keras.models.load_model(output)
+classes = ["Early Blight", "Healthy", "Late Blight"]
 @app.get("/")
-def read_root():
-    return {"message": "Hello, World!"}
+def welcome():
+    return {"msg": "Welcome to Potato Disease Predcitor"}
 
 @app.post("/upload/")
 async def upload_and_segment_image(file: UploadFile = File(...)):
     if not file.content_type.startswith('image/'):
         return {"error": "File is not an image."}
 
-    file_location = os.path.join(UPLOAD_FOLDER, file.filename)
-    with open(file_location, "wb") as buffer:
-        buffer.write(await file.read())
+    image = Image.open(file.file)
+    img = image.resize((256, 256))
+    img_array = np.array(img)
+    img_array = np.expand_dims(img_array, axis=0)
+    
+    img_array = img_array.astype('float32') / 255.
+    pre = model.predict(img_array)
+    predicted_class = classes[np.argmax(pre)] 
+    confidence = float(np.max(pre))*100
+    early = float(pre[0,0])
+    healthy = float(pre[0,1])
+    late = float(pre[0,2])
+    
 
-    image = Image.open(file_location)
-    gray_image = ImageOps.grayscale(image)
-
-    threshold = 128
-    segmented_image = gray_image.point(lambda p: 255 if p > threshold else 0)
-
-    processed_filename = f"segmented_{file.filename}"
-    processed_location = os.path.join(PROCESSED_FOLDER, processed_filename)
-    segmented_image.save(processed_location)
 
     return {
-        "message": "Image uploaded and segmented successfully!",
-        "original_image": f"/uploads/{file.filename}",
-        "segmented_image": f"/processed/{processed_filename}"
+        "status":True,
+        "prediction": predicted_class,
+        "confidence": confidence,
+        "all": {"Early Blight": f"{early:.2f}", "Healthy": f"{healthy:.2f}","Late Blight": f"{late:.2f}"},
+        
+        
+        
     }
 
-# This is important for Vercel to know how to run the app
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
